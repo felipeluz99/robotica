@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Controle Empilhadeira</title>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/nipplejs@0.10.1/dist/nipplejs.min.js"></script>
+
+<link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+
+<body>
+
+<div class="topbar">
+    🔋 Bateria
+    <div class="bar" style="width:200px;height:10px;margin:auto;">
+        <div id="batteryBar"></div>
+    </div>
+</div>
+
+<div class="center">
+
+    <div class="panel">
+        Vel
+        <div class="bar">
+            <div id="speedBar"></div>
+        </div>
+    </div>
+
+    <div class="video-area">
+        <img id="cameraVideo" alt="Video">
+    </div>
+
+    <div class="panel">
+        Altura
+        <div class="bar">
+            <div id="forkBar"></div>
+        </div>
+    </div>
+
+</div>
+
+<div class="controls">
+    <div class="zone" id="leftZone"></div>
+    <div class="zone" id="rightZone"></div>
+</div>
+
+<script>
+const socket = io();
+
+let throttle = 0;
+let yaw = 0;
+
+/* =======================================================
+   VÍDEO VIA WEBSOCKET
+   ======================================================= */
+
+const videoHost = window.location.hostname || "localhost";
+const videoSocket = new WebSocket(`ws://${videoHost}:8765`);
+
+videoSocket.binaryType = "arraybuffer";
+
+const cameraVideo = document.getElementById("cameraVideo");
+
+let urlAnterior = null;
+
+videoSocket.onmessage = (event) => {
+
+    const blob = new Blob(
+        [event.data],
+        { type: "image/jpeg" }
+    );
+
+    const url = URL.createObjectURL(blob);
+
+    cameraVideo.src = url;
+
+    if(urlAnterior){
+        URL.revokeObjectURL(urlAnterior);
+    }
+
+    urlAnterior = url;
+};
+
+/* =======================================================
+   JOYSTICK ESQUERDO
+   ======================================================= */
+
+const left = nipplejs.create({
+    zone: document.getElementById('leftZone'),
+    mode: 'static',
+    position: { left: '50%', top: '50%' },
+    color: 'blue',
+    lockY: true
+});
+
+left.on('move', (evt, data) => {
+    if(data.vector){
+        throttle = data.vector.y;
+        send();
+    }
+});
+
+left.on('end', () => {
+    throttle = 0;
+    send();
+});
+
+/* =======================================================
+   JOYSTICK DIREITO
+   ======================================================= */
+
+const right = nipplejs.create({
+    zone: document.getElementById('rightZone'),
+    mode: 'static',
+    position: { left: '50%', top: '50%' },
+    color: 'red',
+    lockX: true
+});
+
+right.on('move', (evt, data) => {
+    if(data.vector){
+        yaw = data.vector.x;
+        send();
+    }
+});
+
+right.on('end', () => {
+    yaw = 0;
+    send();
+});
+
+/* =======================================================
+   ENVIO
+   ======================================================= */
+
+function send(){
+    socket.emit('control', {
+        throttle: throttle,
+        yaw: yaw
+    });
+}
+
+/* =======================================================
+   TELEMETRIA
+   ======================================================= */
+
+socket.on("telemetry", (data) => {
+
+    if(data.speed !== undefined){
+        document.getElementById("speedBar").style.height =
+            (data.speed * 100) + "%";
+    }
+
+    if(data.fork_height !== undefined){
+        document.getElementById("forkBar").style.height =
+            (data.fork_height * 100) + "%";
+    }
+
+    if(data.battery !== undefined){
+        document.getElementById("batteryBar").style.width =
+            (data.battery * 100) + "%";
+    }
+});
+</script>
+
+</body>
+</html>
