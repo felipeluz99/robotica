@@ -82,7 +82,7 @@ USAR_ANGULO_DA_TAG = False
 TOLERANCIA_ANGULO_TAG_GRAUS = 8.0
 KP_ANGULO_TAG = 0.010
 
-IDADE_MAXIMA_DETECCAO_S = 0.55
+IDADE_MAXIMA_DETECCAO_S = 0.80
 TAG_RETENCAO_INTERFACE_S = 1.00
 TEMPO_PERDA_TAG_S = 0.60
 TEMPO_RECUPERACAO_TAG_S = 3.0
@@ -1068,8 +1068,8 @@ def inicializar_detector_apriltags(largura_camera, altura_camera):
     detector_tags = Detector(
         families=FAMILIA_TAG,
         nthreads=4,
-        quad_decimate=1.0,
-        quad_sigma=0.8,
+        quad_decimate=2.0,
+        quad_sigma=0.0,
         refine_edges=1,
     )
     apriltag_disponivel = True
