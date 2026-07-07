@@ -34,24 +34,45 @@ TAMANHO_TAG_M = 0.048
 FAMILIA_TAG = "tag25h9"
 APRILTAG_TELEMETRY_INTERVAL = 0.20
 
+# Imprime no terminal o tempo de detecção e os IDs vistos em cada frame.
+# Útil para diagnosticar detecção intermitente. Desligue depois dos testes.
+DEBUG_VISAO = True
+
+# Filtro de falsos positivos ("tags fantasmas").
+# hamming = bits corrigidos na decodificação (0 = perfeita).
+# decision_margin = confiança; fantasmas típicos ficam abaixo de ~30,
+# tags reais bem enquadradas ficam entre 50 e 150. Se tags reais
+# começarem a ser rejeitadas, reduza MARGEM_DECISAO_MINIMA para 30.
+HAMMING_MAXIMO = 0
+MARGEM_DECISAO_MINIMA = 40.0
+
 # ============================================================
 # PARÂMETROS INICIAIS DA BUSCA
 # Todos estes valores são de bancada e precisam ser calibrados.
 # ============================================================
 
-# A arena terá três posições longitudinais, com uma tag em cada lado.
+# A arena terá três posições longitudinais.
 NUM_ESTACOES = 3
 
-# Avanço aproximado entre duas fileiras de tags. Como ainda não temos
+# Avanço aproximado entre duas posições. Como ainda não temos
 # diâmetro de roda e relação pulsos/cm confirmados, nesta primeira versão
 # o avanço é temporizado. Ajuste até o robô percorrer aproximadamente 20 cm.
 TEMPO_AVANCO_20CM_S = 1.20
 THROTTLE_BUSCA = 0.24
 
+# Varredura de 360° em passos.
+# O robô gira um passo, para, observa, e só então gira o próximo passo.
+# Passos pequenos evitam o borrão de movimento que impede a detecção.
+PASSO_VARREDURA_GRAUS = 30.0
+NUM_PASSOS_VARREDURA = 12          # 12 x 30° = 360°
+TEMPO_OBSERVACAO_PASSO_S = 0.50
+
 # Giros fechados por giroscópio.
-KP_GIRO = 0.012
-YAW_GIRO_MAX = 0.42
-YAW_GIRO_MIN = 0.16
+# Valores reduzidos: com passos de 30°, o teto antigo (0.42) fazia o robô
+# partir quase na velocidade máxima em todo passo.
+KP_GIRO = 0.010
+YAW_GIRO_MAX = 0.26
+YAW_GIRO_MIN = 0.13
 TOLERANCIA_GIRO_GRAUS = 3.0
 AMOSTRAS_GIRO_ESTAVEL = 4
 
@@ -59,17 +80,20 @@ AMOSTRAS_GIRO_ESTAVEL = 4
 # Troque para -1.0 se o robô girar para o lado oposto.
 SINAL_YAW_GIRO = 1.0
 
-# Tempo parado olhando para cada lado antes de concluir que o alvo não está ali.
-TEMPO_OBSERVACAO_LADO_S = 0.90
-
 # Controle visual final.
 DISTANCIA_FINAL_TAG_MM = 150.0
 TOLERANCIA_X_MM = 20.0
 TOLERANCIA_Z_MM = 25.0
 KP_X_VISUAL = 0.0090
-KP_Z_VISUAL = 0.0090
+# KP_Z reduzido e teto de throttle baixado: antes o robô avançava saturado
+# em 0.75 até ~83 mm do alvo. Agora aproxima com no máximo 0.35 e começa a
+# desacelerar a ~100 mm do erro zero.
+KP_Z_VISUAL = 0.0035
 YAW_VISUAL_MAX = 0.30
-THROTTLE_VISUAL_MAX = 0.75
+THROTTLE_VISUAL_MAX = 0.35
+# Piso do avanço: abaixo disso o robô não vence o atrito e "morre" antes
+# do alvo. Só é aplicado fora da tolerância de distância.
+THROTTLE_VISUAL_MIN = 0.14
 AMOSTRAS_ALINHADO = 6
 
 # Troque o sinal caso a correção visual vá para o lado errado.
@@ -82,11 +106,20 @@ USAR_ANGULO_DA_TAG = False
 TOLERANCIA_ANGULO_TAG_GRAUS = 8.0
 KP_ANGULO_TAG = 0.010
 
-IDADE_MAXIMA_DETECCAO_S = 0.80
+IDADE_MAXIMA_DETECCAO_S = 0.55
 TAG_RETENCAO_INTERFACE_S = 1.00
-TEMPO_PERDA_TAG_S = 0.60
-TEMPO_RECUPERACAO_TAG_S = 3.0
-AMPLITUDE_RECUPERACAO_GRAUS = 18.0
+
+# Recuperação de tag perdida.
+# TEMPO_PERDA_TAG_S maior: a perda geralmente é borrão de movimento, e o
+# robô parado por 1 s frequentemente redetecta sozinho, sem varrer nada.
+TEMPO_PERDA_TAG_S = 1.0
+TEMPO_RECUPERACAO_TAG_S = 4.0
+# Varredura curta de recuperação: amplitude menor, período mais longo e
+# teto de yaw próprio evitam o chicote (o alvo alternava mais rápido do
+# que o robô conseguia alcançá-lo, mantendo o comando sempre no máximo).
+AMPLITUDE_RECUPERACAO_GRAUS = 12.0
+PERIODO_RECUPERACAO_S = 1.4
+YAW_RECUPERACAO_MAX = 0.18
 
 INTERVALO_LOOP_AUTONOMO_S = 0.05
 INTERVALO_STATUS_S = 0.20
@@ -334,13 +367,9 @@ class EstadoMissao(str, Enum):
 
 class FaseBusca(str, Enum):
     AGUARDANDO_GIRO = "AGUARDANDO_GIRO"
-    GIRAR_ESQUERDA = "GIRAR_ESQUERDA"
-    OBSERVAR_ESQUERDA = "OBSERVAR_ESQUERDA"
-    GIRAR_DIREITA = "GIRAR_DIREITA"
-    OBSERVAR_DIREITA = "OBSERVAR_DIREITA"
-    RETORNAR_FRENTE = "RETORNAR_FRENTE"
+    VARRER_GIRO = "VARRER_GIRO"
+    VARRER_OBSERVAR = "VARRER_OBSERVAR"
     AVANCAR = "AVANCAR"
-    GIRAR_RETORNO = "GIRAR_RETORNO"
     ALINHAR = "ALINHAR"
     RECUPERAR_TAG = "RECUPERAR_TAG"
     PARADO = "PARADO"
@@ -373,6 +402,7 @@ class ControladorMissao:
         self.fase_iniciada = time.monotonic()
         self.estacao = 0
         self.passagem = 0
+        self.passo_varredura = 0
         self.giro_estavel = 0
         self.alinhamento_estavel = 0
         self.ultimo_instante_tag = 0.0
@@ -438,6 +468,7 @@ class ControladorMissao:
             self.estado = EstadoMissao.BUSCA
             self.estacao = 0
             self.passagem = 0
+            self.passo_varredura = 0
             self.alinhamento_estavel = 0
             self.heading_frente = None
             self.heading_desejado = None
@@ -500,6 +531,12 @@ class ControladorMissao:
                 "message": self.mensagem,
                 "station": self.estacao + 1 if self.estado == EstadoMissao.BUSCA else None,
                 "pass": self.passagem + 1 if self.estado == EstadoMissao.BUSCA else None,
+                "sweep_step": (
+                    f"{self.passo_varredura + 1}/{NUM_PASSOS_VARREDURA}"
+                    if self.estado == EstadoMissao.BUSCA
+                    and self.fase in (FaseBusca.VARRER_GIRO, FaseBusca.VARRER_OBSERVAR)
+                    else None
+                ),
                 "gyro_driver": driver,
                 "gyro_error": gyro_error,
                 "gyro_address": gyro_address,
@@ -583,6 +620,11 @@ class ControladorMissao:
             THROTTLE_VISUAL_MAX,
         )
 
+        # Piso para vencer o atrito: sem isso o robô para antes do alvo
+        # quando o erro fica pequeno. Só se aplica fora da tolerância.
+        if abs(erro_z) > TOLERANCIA_Z_MM and 0 < abs(throttle_cmd) < THROTTLE_VISUAL_MIN:
+            throttle_cmd = math.copysign(THROTTLE_VISUAL_MIN, throttle_cmd)
+
         # Primeiro centraliza; evita avançar com grande erro lateral.
         if abs(x_mm) > 70.0:
             throttle_cmd = 0.0
@@ -621,21 +663,25 @@ class ControladorMissao:
 
         if agora - self.fase_iniciada > TEMPO_RECUPERACAO_TAG_S:
             # Sem pose absoluta, a opção mais segura é assumir a orientação atual
-            # como novo eixo longitudinal e reiniciar a varredura.
+            # como novo ponto inicial e reiniciar a varredura de 360°.
             self.heading_frente = yaw_atual
-            self.heading_desejado = normalizar_angulo(self.heading_frente + 90.0)
+            self.passo_varredura = 0
+            self.heading_desejado = normalizar_angulo(
+                self.heading_frente + PASSO_VARREDURA_GRAUS
+            )
             self._mudar_fase(
-                FaseBusca.GIRAR_ESQUERDA,
-                "Tag não recuperada. Reiniciando a busca a partir da posição atual.",
+                FaseBusca.VARRER_GIRO,
+                "Tag não recuperada. Reiniciando a varredura a partir da posição atual.",
             )
             return {"throttle": 0.0, "yaw": 0.0}
 
         centro = self.heading_recuperacao if self.heading_recuperacao is not None else yaw_atual
         tempo = agora - self.fase_iniciada
-        # Alterna o alvo a cada 0,7 s para varrer para os dois lados.
-        sentido = 1 if int(tempo / 0.7) % 2 == 0 else -1
+        # Alterna o alvo lentamente para varrer os dois lados sem chicotear.
+        sentido = 1 if int(tempo / PERIODO_RECUPERACAO_S) % 2 == 0 else -1
         alvo = normalizar_angulo(centro + sentido * AMPLITUDE_RECUPERACAO_GRAUS)
         yaw_cmd, _ = self._comando_giro(yaw_atual, alvo)
+        yaw_cmd = limitar(yaw_cmd, -YAW_RECUPERACAO_MAX, YAW_RECUPERACAO_MAX)
         return {"throttle": 0.0, "yaw": yaw_cmd}
 
     def passo(self):
@@ -668,65 +714,64 @@ class ControladorMissao:
 
             if self.fase == FaseBusca.AGUARDANDO_GIRO:
                 self.heading_frente = yaw_atual
-                self.heading_desejado = normalizar_angulo(self.heading_frente + 90.0)
+                self.passo_varredura = 0
+                self.heading_desejado = normalizar_angulo(
+                    self.heading_frente + PASSO_VARREDURA_GRAUS
+                )
                 self._mudar_fase(
-                    FaseBusca.GIRAR_ESQUERDA,
-                    "Girando 90° para procurar a tag no lado esquerdo.",
+                    FaseBusca.VARRER_GIRO,
+                    "Iniciando varredura de 360° em passos de "
+                    f"{PASSO_VARREDURA_GRAUS:.0f}°.",
                 )
                 parar_robo()
                 return
 
-            if self.fase == FaseBusca.GIRAR_ESQUERDA:
+            if self.fase == FaseBusca.VARRER_GIRO:
                 yaw_cmd, chegou = self._comando_giro(yaw_atual, self.heading_desejado)
                 envio_esp({"throttle": 0.0, "yaw": yaw_cmd})
                 if chegou and self.giro_estavel >= AMOSTRAS_GIRO_ESTAVEL:
                     parar_robo()
                     self._mudar_fase(
-                        FaseBusca.OBSERVAR_ESQUERDA,
-                        "Observando o lado esquerdo.",
+                        FaseBusca.VARRER_OBSERVAR,
+                        f"Varredura: observando passo "
+                        f"{self.passo_varredura + 1}/{NUM_PASSOS_VARREDURA}.",
                     )
                 return
 
-            if self.fase == FaseBusca.OBSERVAR_ESQUERDA:
+            if self.fase == FaseBusca.VARRER_OBSERVAR:
                 parar_robo()
-                if time.monotonic() - self.fase_iniciada >= TEMPO_OBSERVACAO_LADO_S:
-                    self.heading_desejado = normalizar_angulo(self.heading_frente - 90.0)
-                    self._mudar_fase(
-                        FaseBusca.GIRAR_DIREITA,
-                        "Girando 180° para procurar no lado direito.",
-                    )
-                return
+                if time.monotonic() - self.fase_iniciada < TEMPO_OBSERVACAO_PASSO_S:
+                    return
 
-            if self.fase == FaseBusca.GIRAR_DIREITA:
-                yaw_cmd, chegou = self._comando_giro(yaw_atual, self.heading_desejado)
-                envio_esp({"throttle": 0.0, "yaw": yaw_cmd})
-                if chegou and self.giro_estavel >= AMOSTRAS_GIRO_ESTAVEL:
-                    parar_robo()
-                    self._mudar_fase(
-                        FaseBusca.OBSERVAR_DIREITA,
-                        "Observando o lado direito.",
-                    )
-                return
+                self.passo_varredura += 1
 
-            if self.fase == FaseBusca.OBSERVAR_DIREITA:
-                parar_robo()
-                if time.monotonic() - self.fase_iniciada >= TEMPO_OBSERVACAO_LADO_S:
-                    self.heading_desejado = self.heading_frente
-                    self._mudar_fase(
-                        FaseBusca.RETORNAR_FRENTE,
-                        "Retornando 90° para o eixo central.",
-                    )
-                return
+                if self.passo_varredura >= NUM_PASSOS_VARREDURA:
+                    # 360° completos sem achar a tag.
+                    if self.estacao + 1 >= NUM_ESTACOES:
+                        # Fim das estações: parar por segurança em vez de
+                        # avançar para fora da arena.
+                        self.estado = EstadoMissao.IDLE
+                        self._mudar_fase(FaseBusca.PARADO)
+                        self.mensagem = (
+                            f"AprilTag {self.tag_alvo} não encontrada em "
+                            f"{NUM_ESTACOES} estações. Mude para MANUAL, "
+                            "reposicione o robô e tente novamente."
+                        )
+                        parar_robo()
+                        return
 
-            if self.fase == FaseBusca.RETORNAR_FRENTE:
-                yaw_cmd, chegou = self._comando_giro(yaw_atual, self.heading_desejado)
-                envio_esp({"throttle": 0.0, "yaw": yaw_cmd})
-                if chegou and self.giro_estavel >= AMOSTRAS_GIRO_ESTAVEL:
-                    parar_robo()
                     self._mudar_fase(
                         FaseBusca.AVANCAR,
-                        "Avançando aproximadamente 20 cm até a próxima fileira.",
+                        "Volta completa sem detectar a tag. "
+                        "Avançando para a próxima posição.",
                     )
+                    return
+
+                self.heading_desejado = normalizar_angulo(
+                    self.heading_frente
+                    + (self.passo_varredura + 1) * PASSO_VARREDURA_GRAUS
+                )
+                self._mudar_fase(FaseBusca.VARRER_GIRO)
                 return
 
             if self.fase == FaseBusca.AVANCAR:
@@ -737,34 +782,15 @@ class ControladorMissao:
 
                 parar_robo()
                 self.estacao += 1
-
-                if self.estacao < NUM_ESTACOES:
-                    self.heading_desejado = normalizar_angulo(self.heading_frente + 90.0)
-                    self._mudar_fase(
-                        FaseBusca.GIRAR_ESQUERDA,
-                        f"Fileira {self.estacao + 1}: procurando primeiro à esquerda.",
-                    )
-                else:
-                    self.heading_desejado = normalizar_angulo(self.heading_frente + 180.0)
-                    self._mudar_fase(
-                        FaseBusca.GIRAR_RETORNO,
-                        "Fim das três fileiras. Girando 180° para repetir a busca no retorno.",
-                    )
-                return
-
-            if self.fase == FaseBusca.GIRAR_RETORNO:
-                yaw_cmd, chegou = self._comando_giro(yaw_atual, self.heading_desejado)
-                envio_esp({"throttle": 0.0, "yaw": yaw_cmd})
-                if chegou and self.giro_estavel >= AMOSTRAS_GIRO_ESTAVEL:
-                    parar_robo()
-                    self.heading_frente = self.heading_desejado
-                    self.estacao = 0
-                    self.passagem += 1
-                    self.heading_desejado = normalizar_angulo(self.heading_frente + 90.0)
-                    self._mudar_fase(
-                        FaseBusca.GIRAR_ESQUERDA,
-                        "Iniciando nova passagem no sentido contrário.",
-                    )
+                self.passo_varredura = 0
+                self.heading_frente = yaw_atual
+                self.heading_desejado = normalizar_angulo(
+                    self.heading_frente + PASSO_VARREDURA_GRAUS
+                )
+                self._mudar_fase(
+                    FaseBusca.VARRER_GIRO,
+                    f"Estação {self.estacao + 1}: nova varredura de 360°.",
+                )
                 return
 
     def emitir_status_se_necessario(self, forcar=False):
@@ -1065,10 +1091,15 @@ def inicializar_detector_apriltags(largura_camera, altura_camera):
         altura_camera / 2.0,
     ]
 
+    # quad_decimate=1.0 prioriza alcance (a tag de 48 mm já é pequena).
+    # Se o print [VISAO] mostrar tempos de detecção acima de ~150 ms na
+    # Pi 3, suba para 1.5 (perde ~1/3 do alcance, dobra a velocidade).
+    # quad_sigma=0.0 evita borrar uma tag que já é pequena; suba apenas se
+    # a imagem tiver ruído visível.
     detector_tags = Detector(
         families=FAMILIA_TAG,
         nthreads=4,
-        quad_decimate=2.0,
+        quad_decimate=1.0,
         quad_sigma=0.0,
         refine_edges=1,
     )
@@ -1132,10 +1163,10 @@ def detectar_e_desenhar_apriltags(frame):
 
     imagem_cinza = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # Equalização simples ajuda quando a iluminação oscila ou a tag está
-    # com contraste baixo. Não substitui boa iluminação/foco, mas reduz
-    # falhas intermitentes em frames isolados.
-    imagem_cinza = cv2.equalizeHist(imagem_cinza)
+    # Equalização desativada: em iluminação razoável ela pode amplificar
+    # ruído e piorar a decodificação de tags pequenas. Reative apenas se
+    # a arena tiver iluminação muito irregular e compare o resultado.
+    # imagem_cinza = cv2.equalizeHist(imagem_cinza)
 
     tags_detectadas = detector_tags.detect(
         imagem_cinza,
@@ -1146,6 +1177,18 @@ def detectar_e_desenhar_apriltags(frame):
 
     processadas = []
     for tag in tags_detectadas:
+        if DEBUG_VISAO:
+            print(
+                f"[VISAO] id={tag.tag_id} hamming={tag.hamming} "
+                f"margin={tag.decision_margin:.0f}"
+            )
+
+        # Filtro de tags fantasmas: descarta decodificações fracas.
+        if tag.hamming > HAMMING_MAXIMO:
+            continue
+        if tag.decision_margin < MARGEM_DECISAO_MINIMA:
+            continue
+
         try:
             processadas.append(processar_tag(frame, tag, parametros_camera))
         except Exception as erro:
@@ -1214,7 +1257,12 @@ def loop_camera_apriltags():
         sucesso, frame = camera.read()
 
         if sucesso:
+            t0 = time.monotonic()
             tags = detectar_e_desenhar_apriltags(frame)
+            if DEBUG_VISAO:
+                dt_ms = (time.monotonic() - t0) * 1000.0
+                ids_frame = [t.get("id") for t in tags]
+                print(f"[VISAO] deteccao {dt_ms:.0f} ms, tags={ids_frame}")
             emitir_apriltags_para_interface(tags)
         else:
             time.sleep(0.1)
