@@ -78,10 +78,6 @@ Os pinos principais definidos em `motor.cpp`:
 | MPU6050 — I²C SDA / SCL | 21 / 4 |
 | Alimentação dos encoders — VCC / GND por GPIO | 32 (HIGH) / 33 (LOW) |
 
-> Observação: os valores de calibração (pulsos por revolução, RPM máximo,
-> ganhos, tempos de avanço) estão todos no topo dos arquivos como constantes, de
-> propósito, para facilitar o ajuste em bancada. Vários deles ainda são
-> estimativas de bancada, como comentado no próprio código.
 
 ---
 
