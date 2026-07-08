@@ -324,9 +324,7 @@ não "fugir" do controle:
   MANUAL, tanto no navegador quanto no servidor.
 - **Sem giroscópio válido, sem movimento automático:** se a telemetria do yaw não
   estiver confiável, a máquina de estados mantém o robô parado.
-- **LED de estado (opcional):** em placas com LED RGB, a cor indica o modo/estado
-  (azul = manual, laranja = busca, roxo = recuperando tag, verde = encontrado,
-  vermelho = timeout).
+
 
 ---
 
