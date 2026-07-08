@@ -1,11 +1,11 @@
-# Empilhadeira Robô Automatizada
+# Empilhadeira Autônoma
 
-Documentação técnica do projeto de uma empilhadeira robótica capaz de operar em
+Documentação do projeto de uma empilhadeira capaz de operar em
 dois modos: **controle manual** por um operador (via celular ou navegador) e
 **busca automática** de um alvo marcado com uma etiqueta AprilTag, usando visão
-computacional e controle por realimentação.
+computacional.
 
-O objetivo deste documento é explicar, de forma direta, como o sistema foi
+O objetivo deste documento é explicar como o sistema foi
 organizado, o papel de cada peça de software e as ideias de controle por trás da
 navegação autônoma.
 
