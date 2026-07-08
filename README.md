@@ -1,5 +1,14 @@
 # Empilhadeira Autônoma
 
+Turma 3VB - Grupo 3
+
+Felipe Luz machado
+Gabriel Cavalleiro
+Henrique Conti
+Lucas Erbisti
+
+
+
 Documentação do projeto de uma empilhadeira capaz de operar em
 dois modos: **controle manual** por um operador (via celular ou navegador) e
 **busca automática** de um alvo marcado com uma etiqueta AprilTag, usando visão
