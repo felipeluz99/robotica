@@ -89,7 +89,7 @@ módulos e facilitar a montagem, manutenção e depuração do robô.
 
 
 
-![Diagrama elétrico](docs/images/diagrama-eletrico.jpg)
+![Diagrama elétrico](docs/images/diagrama-eletrico.jpeg)
 
 ---
 
